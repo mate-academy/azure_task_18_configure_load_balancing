@@ -217,9 +217,9 @@ if ($loadBalancer.properties.backendAddressPools[0].properties.loadBalancerBacke
     throw "Please make sure that load balanser backend pool has 2 backend targets and try again"
 }
 
-if ($loadBalancer.properties.loadBalancingRules.Count -eq 1) { 
+if ($loadBalancer.properties.loadBalancingRules.Count -eq 1) {
     Write-Output "`u{2705} Checked if load balancer backend pool has load balancing rules - OK."
-} else { 
+} else {
     Write-Output `u{1F914}
     throw "Please make sure that load balanser has 1 load balancing rule and try again"
 }
