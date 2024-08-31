@@ -39,11 +39,11 @@ In this task, you will need to update the existing PowerShell script `task.ps1`.
 
 - virtual network with 2 subnets;
 - `webserver-1` and `webserver-2` virtual machines — used to host the todo web app. They are deployed in a subnet `web`, without public IP;
-- `jumpbox` virtual machine, used as a dedicated virtual machine for management of `webserver`. It is deployed to a separate subnet, has a public IP, and allows connecting to it through SSH; 
+- `jumpbox` virtual machine, used as a dedicated virtual machine for management of `webserver`. It is deployed to a separate subnet, has a public IP, and allows connecting to it through SSH;
 - `or.nottodo` private DNS zone, which is already linked to the virtual network;
 - `todo.or.not` a DNS record in the private DNS zone that points to IP `10.20.30.62`.
 
-In this task, you need to configure load balancing for the web servers. Specifically, you need to deploy a load balancer, configure it, and point domain `todo.or.nottodo` in the private DNS zone to its Frontend IP and create a DNS record in it: 
+In this task, you need to configure load balancing for the web servers. Specifically, you need to deploy a load balancer, configure it, and point domain `todo.or.nottodo` in the private DNS zone to its Frontend IP and create a DNS record in it:
 
 1. Review the script `task.ps1`.  
 
