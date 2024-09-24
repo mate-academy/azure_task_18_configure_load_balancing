@@ -46,8 +46,16 @@ $osVersion =                            "latest"
 $osDiskSizeGB =                         64
 $osDiskType =                           "Premium_LRS"
 
-$lbName = "loadbalancer"
-$lbIpAddress = "10.20.30.62"
+# Load Balancer settings
+$lbName =                               "loadbalancer"
+  # Load Balancer web VMs rule settings
+  $lbFeName =                           "Lb_Fe_WebServer"
+  $lbFePort =                           "80"
+  $lbFeIpAddress =                      "10.20.30.62"
+  $lbBeName =                           "Lb_Be_Webserver"
+  $lbBePort =                           "8080"
+  $lbRuleName =                         "LoadBalancer_WebServerVMs_assign_ip_${lbFeIpAddress}"
+  $lbHealthProbeName =                  "LoadBalancer_WebServerVMs_probe"
 
 
 Write-Host "Creating a resource group $resourceGroupName ..."
@@ -261,7 +269,66 @@ New-AzPrivateDnsVirtualNetworkLink `
   -VirtualNetworkId                     $vnetObj.Id `
   -EnableRegistration
 
-Write-Host "Creating an 'A' DNS record (Assigning the ipv4 to management VM) ..."
+Write-Host "Creating a load balancer ..."
+Write-Host "Creating load balancer frontend configuration ..."
+$lbFeIpConfig = New-AzLoadBalancerFrontendIpConfig `
+  -Name                                 $lbFeName `
+  -SubnetId                             $webSubnetId `
+  -PrivateIpAddress                     $lbFeIpAddress
+Write-Host "Creating backend address pool configuration ..."
+$lbBeIpPoolConfig = New-AzLoadBalancerBackendAddressPoolConfig `
+  -Name                                 $lbBeName
+Write-Host "Creating the load balancer rule ..."
+$lbRule = New-AzLoadBalancerRuleConfig `
+  -Name                                 $lbRuleName `
+  -Protocol                             "tcp" `
+  -FrontendPort                         $lbFePort `
+  -BackendPort                          $lbBePort `
+  -IdleTimeoutInMinutes                 "15" `
+  -FrontendIpConfiguration              $lbFeIpConfig `
+  -BackendAddressPool                   $lbBeIpPoolConfig `
+  -EnableTcpReset
+Write-Host "Creating the health probe ..."
+$lbHealthProbe = New-AzLoadBalancerProbeConfig `
+  -Name                                 $lbHealthProbeName `
+  -Protocol                             "tcp" `
+  -Port                                 $lbBePort `
+  -IntervalInSeconds                    "360" `
+  -ProbeCount                           "5"
+Write-Host "Creating the load balancer resource ..."
+New-AzLoadBalancer `
+  -Name                                 $lbName `
+  -ResourceGroupName                    $resourceGroupName `
+  -Location                             $location `
+  -Sku                                  "Standard" `
+  -FrontendIpConfiguration              $lbFeIpConfig `
+  -BackendAddressPool                   $lbBeIpPoolConfig `
+  -LoadBalancingRule                    $lbRule `
+  -Probe                                $lbHealthProbe
+
+Write-Host "Adding VMs to the backend pool"
+$webServerVMs = Get-AzVm `
+  -ResourceGroupName $resourceGroupName | Where-Object {
+    $_.Name.StartsWith($webVmName)
+  }
+  foreach ($vm in $webServerVMs) {
+    $vmname = $vm.Name
+    $nic = Get-AzNetworkInterface `
+      -ResourceGroupName $resourceGroupName | Where-Object {
+        $_.Id -eq $vm.NetworkProfile.NetworkInterfaces.Id
+        }
+        $ipCfg = $nic.IpConfigurations | Where-Object {
+          $_.Name -eq "${vmname}-ipconfig"
+          }
+    $ipCfg.LoadBalancerBackendAddressPools.Add($lbBeIpPoolConfig)
+    Set-AzNetworkInterface `
+      -NetworkInterface                 $nic
+  }
+
+Write-Host `
+  "Creating an 'A' DNS record" `
+  "(Assigning the ${webSetSubdomain}.$privateDnsZoneName domain name" `
+  " to the load balancer front end ip $lbFeIpAddress)"
 New-AzPrivateDnsRecordSet `
   -Name                                 $webSetSubdomain `
   -RecordType                           A `
@@ -270,18 +337,5 @@ New-AzPrivateDnsRecordSet `
   -ZoneName                             $privateDnsZoneName `
   -PrivateDnsRecords                    @(
     New-AzPrivateDnsRecordConfig `
-      -IPv4Address                      $lbIpAddress
+      -IPv4Address                      $lbFeIpAddress
     )
-
-# Write your code here ->
-Write-Host "Creating a load balancer ..."
-
-
-# Write-Host "Adding VMs to the backend pool"
-# $vms = Get-AzVm -ResourceGroupName $resourceGroupName | Where-Object {$_.Name.StartsWith($webVmName)}
-# foreach ($vm in $vms) {
-#    $nic = Get-AzNetworkInterface -ResourceGroupName $resourceGroupName | Where-Object {$_.Id -eq $vm.NetworkProfile.NetworkInterfaces.Id}
-#    $ipCfg = $nic.IpConfigurations | Where-Object {$_.Primary}
-#    $ipCfg.LoadBalancerBackendAddressPools.Add($bepool)
-#    Set-AzNetworkInterface -NetworkInterface $nic
-# }
