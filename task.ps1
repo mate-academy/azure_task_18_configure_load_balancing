@@ -104,13 +104,52 @@ $webSubnetId = (Get-AzVirtualNetworkSubnetConfig -Name $webSubnetName -VirtualNe
 
 # Write your code here -> 
 Write-Host "Creating a load balancer ..."
+$lbip = @{
+  Name = 'myFrontEnd'
+  PrivateIpAddress = $lbIpAddress
+  SubnetId = $webSubnetId
+}
+$feip = New-AzLoadBalancerFrontendIpConfig @lbip
 
+$bepool = New-AzLoadBalancerBackendAddressPoolConfig -Name 'myBackEndPool'
 
-# Write-Host "Adding VMs to the backend pool"
-# $vms = Get-AzVm -ResourceGroupName $resourceGroupName | Where-Object {$_.Name.StartsWith($webVmName)}
-# foreach ($vm in $vms) {
-#    $nic = Get-AzNetworkInterface -ResourceGroupName $resourceGroupName | Where-Object {$_.Id -eq $vm.NetworkProfile.NetworkInterfaces.Id}    
-#    $ipCfg = $nic.IpConfigurations | Where-Object {$_.Primary} 
-#    $ipCfg.LoadBalancerBackendAddressPools.Add($bepool)
-#    Set-AzNetworkInterface -NetworkInterface $nic
-# }
+$probe = @{
+  Name = 'myHealthProbe'
+  Protocol = 'tcp'
+  Port = '8080'
+  IntervalInSeconds = '360'
+  ProbeCount = '5'
+}
+$healthprobe = New-AzLoadBalancerProbeConfig @probe
+
+$lbrule = @{
+  Name = 'myHTTPRule'
+  Protocol = 'tcp'
+  FrontendPort = '80'
+  BackendPort = '8080'
+  IdleTimeoutInMinutes = '15'
+  FrontendIpConfiguration = $feip
+  BackendAddressPool = $bepool
+}
+$rule = New-AzLoadBalancerRuleConfig @lbrule -EnableTcpReset
+
+$loadbalancer = @{
+  ResourceGroupName = $resourceGroupName
+  Name = $lbName
+  Location = $location
+  Sku = 'Standard'
+  FrontendIpConfiguration = $feip
+  BackendAddressPool = $bepool
+  LoadBalancingRule = $rule
+  Probe = $healthprobe
+}
+New-AzLoadBalancer @loadbalancer
+
+Write-Host "Adding VMs to the backend pool"
+$vms = Get-AzVm -ResourceGroupName $resourceGroupName | Where-Object {$_.Name.StartsWith($webVmName)}
+foreach ($vm in $vms) {
+   $nic = Get-AzNetworkInterface -ResourceGroupName $resourceGroupName | Where-Object {$_.Id -eq $vm.NetworkProfile.NetworkInterfaces.Id}
+   $ipCfg = $nic.IpConfigurations | Where-Object {$_.Primary}
+   $ipCfg.LoadBalancerBackendAddressPools.Add($bepool)
+   Set-AzNetworkInterface -NetworkInterface $nic
+}
