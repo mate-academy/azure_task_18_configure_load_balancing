@@ -89,7 +89,7 @@ New-AzVm `
 
 
 Write-Host "Creating a private DNS zone ..."
-$Zone = New-AzPrivateDnsZone -Name $privateDnsZoneName -ResourceGroupName $resourceGroupName 
+$Zone = New-AzPrivateDnsZone -Name $privateDnsZoneName -ResourceGroupName $resourceGroupName
 $Link = New-AzPrivateDnsVirtualNetworkLink -ZoneName $privateDnsZoneName -ResourceGroupName $resourceGroupName -Name $Zone.Name -VirtualNetworkId $virtualNetwork.Id -EnableRegistration
 
 
@@ -98,19 +98,67 @@ $Records = @()
 $Records += New-AzPrivateDnsRecordConfig -IPv4Address $lbIpAddress
 New-AzPrivateDnsRecordSet -Name "todo" -RecordType A -ResourceGroupName $resourceGroupName -TTL 1800 -ZoneName $privateDnsZoneName -PrivateDnsRecords $Records
 
-# Prepare variables, required for creation and configuration of load balancer - 
-# you will need them to setup a load balancer 
+# Prepare variables, required for creation and configuration of load balancer -
+# you will need them to setup a load balancer
 $webSubnetId = (Get-AzVirtualNetworkSubnetConfig -Name $webSubnetName -VirtualNetwork $virtualNetwork).Id
 
-# Write your code here -> 
+# Write your code here ->
 Write-Host "Creating a load balancer ..."
 
 
 # Write-Host "Adding VMs to the backend pool"
 # $vms = Get-AzVm -ResourceGroupName $resourceGroupName | Where-Object {$_.Name.StartsWith($webVmName)}
 # foreach ($vm in $vms) {
-#    $nic = Get-AzNetworkInterface -ResourceGroupName $resourceGroupName | Where-Object {$_.Id -eq $vm.NetworkProfile.NetworkInterfaces.Id}    
-#    $ipCfg = $nic.IpConfigurations | Where-Object {$_.Primary} 
+#    $nic = Get-AzNetworkInterface -ResourceGroupName $resourceGroupName | Where-Object {$_.Id -eq $vm.NetworkProfile.NetworkInterfaces.Id}
+#    $ipCfg = $nic.IpConfigurations | Where-Object {$_.Primary}
 #    $ipCfg.LoadBalancerBackendAddressPools.Add($bepool)
 #    Set-AzNetworkInterface -NetworkInterface $nic
 # }
+$frontIp = New-AzLoadBalancerFrontendIpConfig -Name "frontIP" -PrivateIpAddress $lbIpAddress -SubnetId $webSubnetId
+$bepool = New-AzLoadBalancerBackendAddressPoolConfig -Name 'backEndPool'
+$healthProbe = New-AzLoadBalancerProbeConfig -Name "healthProbe" `
+    -Protocol Tcp `
+    -Port 8080 `
+    -IntervalInSeconds 360 `
+    -ProbeCount 5
+
+
+$rule = New-AzLoadBalancerRuleConfig -Name "LBrule" `
+    -FrontendIPConfiguration $frontIp `
+    -BackendAddressPool $bepool `
+    -Probe $healthProbe `
+    -Protocol Tcp `
+    -FrontendPort 80 `
+    -BackendPort 8080 `
+    -IdleTimeoutInMinutes 15 `
+    -LoadDistribution SourceIP `
+    -EnableTcpReset
+
+$loadbalancer = New-AzLoadBalancer -Name $lbName `
+    -ResourceGroupName $resourceGroupName `
+    -Location $location `
+    -FrontendIpConfiguration $frontIp `
+    -BackendAddressPool $bepool `
+    -Probe $healthProbe `
+    -LoadBalancingRule $rule
+
+
+$backendPool = Get-AzLoadBalancerBackendAddressPoolConfig -LoadBalancer $loadbalancer | Where-Object { $_.Name -eq 'backEndPool' }
+# Write-Host "Adding VMs to the backend pool"
+# $vms = Get-AzVm -ResourceGroupName $resourceGroupName | Where-Object {$_.Name.StartsWith($webVmName)}
+# foreach ($vm in $vms) {
+#    $nicId = $vm.NetworkProfile.NetworkInterfaces[0].Id
+#    $nic = Get-AzNetworkInterface -ResourceGroupName $resourceGroupName | Where-Object { $_.Id -eq $nicId }
+#    $ipCfg = $nic.IpConfigurations | Where-Object {$_.Primary}
+#    $ipCfg.LoadBalancerBackendAddressPools.Add($backendPool)
+#    Set-AzNetworkInterface -NetworkInterface $nic
+# }
+
+Write-Host "Adding VMs to the backend pool"
+$vms = Get-AzVm -ResourceGroupName $resourceGroupName | Where-Object {$_.Name.StartsWith($webVmName)}
+foreach ($vm in $vms) {
+   $nic = Get-AzNetworkInterface -ResourceGroupName $resourceGroupName | Where-Object {$_.Id -eq $vm.NetworkProfile.NetworkInterfaces.Id}
+   $ipCfg = $nic.IpConfigurations | Where-Object {$_.Primary}
+   $ipCfg.LoadBalancerBackendAddressPools.Add($backendPool)
+   Set-AzNetworkInterface -NetworkInterface $nic
+}
