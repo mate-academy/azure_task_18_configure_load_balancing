@@ -98,19 +98,45 @@ $Records = @()
 $Records += New-AzPrivateDnsRecordConfig -IPv4Address $lbIpAddress
 New-AzPrivateDnsRecordSet -Name "todo" -RecordType A -ResourceGroupName $resourceGroupName -TTL 1800 -ZoneName $privateDnsZoneName -PrivateDnsRecords $Records
 
-# Prepare variables, required for creation and configuration of load balancer - 
-# you will need them to setup a load balancer 
+# Prepare variables, required for creation and configuration of load balancer -
+# you will need them to setup a load balancer
 $webSubnetId = (Get-AzVirtualNetworkSubnetConfig -Name $webSubnetName -VirtualNetwork $virtualNetwork).Id
 
-# Write your code here -> 
+# Write your code here ->
 Write-Host "Creating a load balancer ..."
 
+# Create frontend IP config for LB
+$frontendIPConfig = New-AzLoadBalancerFrontendIpConfig -Name "LoadBalancerFrontend" `
+    -PrivateIpAddress $lbIpAddress `
+    -SubnetId $webSubnetId
 
-# Write-Host "Adding VMs to the backend pool"
-# $vms = Get-AzVm -ResourceGroupName $resourceGroupName | Where-Object {$_.Name.StartsWith($webVmName)}
-# foreach ($vm in $vms) {
-#    $nic = Get-AzNetworkInterface -ResourceGroupName $resourceGroupName | Where-Object {$_.Id -eq $vm.NetworkProfile.NetworkInterfaces.Id}    
-#    $ipCfg = $nic.IpConfigurations | Where-Object {$_.Primary} 
-#    $ipCfg.LoadBalancerBackendAddressPools.Add($bepool)
-#    Set-AzNetworkInterface -NetworkInterface $nic
-# }
+# Create backend address pool
+$backendPoolConfig = New-AzLoadBalancerBackendAddressPoolConfig -Name "BackendPool"
+
+# Create health probe on port 8080
+$probeConfig = New-AzLoadBalancerProbeConfig -Name "HealthProbe" `
+    -Protocol Tcp -Port 8080 -IntervalInSeconds 15 -ProbeCount 2
+
+# Create load balancing rule (frontend 80 -> backend 8080)
+$lbRule = New-AzLoadBalancerRuleConfig -Name "HttpRule" `
+    -FrontendIpConfiguration $frontendIPConfig `
+    -BackendAddressPool $backendPoolConfig `
+    -Probe $probeConfig `
+    -Protocol Tcp -FrontendPort 80 -BackendPort 8080
+
+$loadBalancer = New-AzLoadBalancer -ResourceGroupName $resourceGroupName `
+    -Name $lbName `
+    -Location $location `
+    -FrontendIpConfiguration $frontendIPConfig `
+    -BackendAddressPool $backendPoolConfig `
+    -LoadBalancingRule $lbRule `
+    -Probe $probeConfig
+for (($zone = 1); ($zone -le 2); ($zone++) ) {
+    $vmName = "webserver-$zone"
+    $vm = Get-AzVM -Name $vmName -ResourceGroupName $resourceGroupName
+    $nicId = $vm.NetworkProfile.NetworkInterfaces[0].Id
+    $nicName = ($nicId -split "/")[-1]
+    $nic = Get-AzNetworkInterface -Name $nicName -ResourceGroupName $resourceGroupName
+    $nic.IpConfigurations[0].LoadBalancerBackendAddressPools = $loadBalancer.BackendAddressPools
+    Set-AzNetworkInterface -NetworkInterface $nic
+}
