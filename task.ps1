@@ -24,29 +24,71 @@ $lbIpAddress = "10.20.30.62"
 
 
 Write-Host "Creating a resource group $resourceGroupName ..."
-New-AzResourceGroup -Name $resourceGroupName -Location $location
+New-AzResourceGroup `
+-Name $resourceGroupName `
+-Location $location;
 
 Write-Host "Creating web network security group..."
-$webHttpRule = New-AzNetworkSecurityRuleConfig -Name "web" -Description "Allow HTTP" `
-   -Access Allow -Protocol Tcp -Direction Inbound -Priority 100 -SourceAddressPrefix `
-   Internet -SourcePortRange * -DestinationAddressPrefix * -DestinationPortRange 80,443
-$webNsg = New-AzNetworkSecurityGroup -ResourceGroupName $resourceGroupName -Location $location -Name `
-   $webSubnetName -SecurityRules $webHttpRule
+$webHttpRule = New-AzNetworkSecurityRuleConfig `
+-Name "web" `
+-Description "Allow HTTP" `
+-Access Allow `
+-Protocol Tcp `
+-Direction Inbound `
+-Priority 100 `
+-SourceAddressPrefix Internet `
+-SourcePortRange * `
+-DestinationAddressPrefix * `
+-DestinationPortRange 80,443;
+
+$webNsg = New-AzNetworkSecurityGroup `
+-Name $webSubnetName `
+-ResourceGroupName $resourceGroupName `
+-Location $location `
+-SecurityRules $webHttpRule;
 
 Write-Host "Creating mngSubnet network security group..."
-$mngSshRule = New-AzNetworkSecurityRuleConfig -Name "ssh" -Description "Allow SSH" `
-   -Access Allow -Protocol Tcp -Direction Inbound -Priority 100 -SourceAddressPrefix `
-   Internet -SourcePortRange * -DestinationAddressPrefix * -DestinationPortRange 22
-$mngNsg = New-AzNetworkSecurityGroup -ResourceGroupName $resourceGroupName -Location $location -Name `
-   $mngSubnetName -SecurityRules $mngSshRule
+$mngSshRule = New-AzNetworkSecurityRuleConfig `
+-Name "ssh" `
+-Description "Allow SSH" `
+-Access Allow `
+-Protocol Tcp `
+-Direction Inbound `
+-Priority 100 `
+-SourceAddressPrefix Internet `
+-SourcePortRange * `
+-DestinationAddressPrefix * `
+-DestinationPortRange 22;
+
+$mngNsg = New-AzNetworkSecurityGroup `
+-ResourceGroupName $resourceGroupName `
+-Location $location `
+-Name $mngSubnetName `
+-SecurityRules $mngSshRule;
 
 Write-Host "Creating a virtual network ..."
-$webSubnet = New-AzVirtualNetworkSubnetConfig -Name $webSubnetName -AddressPrefix $webSubnetIpRange -NetworkSecurityGroup $webNsg
-$mngSubnet = New-AzVirtualNetworkSubnetConfig -Name $mngSubnetName -AddressPrefix $mngSubnetIpRange -NetworkSecurityGroup $mngNsg
-$virtualNetwork = New-AzVirtualNetwork -Name $virtualNetworkName -ResourceGroupName $resourceGroupName -Location $location -AddressPrefix $vnetAddressPrefix -Subnet $webSubnet,$mngSubnet
+$webSubnet = New-AzVirtualNetworkSubnetConfig `
+-Name $webSubnetName `
+-AddressPrefix $webSubnetIpRange `
+-NetworkSecurityGroup $webNsg;
+
+$mngSubnet = New-AzVirtualNetworkSubnetConfig `
+-Name $mngSubnetName `
+-AddressPrefix $mngSubnetIpRange `
+-NetworkSecurityGroup $mngNsg;
+
+$virtualNetwork = New-AzVirtualNetwork `
+-Name $virtualNetworkName `
+-ResourceGroupName $resourceGroupName `
+-Location $location `
+-AddressPrefix $vnetAddressPrefix `
+-Subnet $webSubnet,$mngSubnet;
 
 Write-Host "Creating a SSH key resource ..."
-New-AzSshKey -Name $sshKeyName -ResourceGroupName $resourceGroupName -PublicKey $sshKeyPublicKey
+New-AzSshKey `
+-Name $sshKeyName `
+-ResourceGroupName $resourceGroupName `
+-PublicKey $sshKeyPublicKey;
 
 Write-Host "Creating a web server VM ..."
 
@@ -60,7 +102,7 @@ for (($zone = 1); ($zone -le 2); ($zone++) ) {
    -size $vmSize `
    -SubnetName $webSubnetName `
    -VirtualNetworkName $virtualNetworkName `
-   -SshKeyName $sshKeyName 
+   -SshKeyName $sshKeyName
    $Params = @{
       ResourceGroupName  = $resourceGroupName
       VMName             = $vmName
@@ -74,7 +116,14 @@ for (($zone = 1); ($zone -le 2); ($zone++) ) {
 }
 
 Write-Host "Creating a public IP ..."
-$publicIP = New-AzPublicIpAddress -Name $jumpboxVmName -ResourceGroupName $resourceGroupName -Location $location -Sku Basic -AllocationMethod Dynamic -DomainNameLabel $dnsLabel
+$publicIP = New-AzPublicIpAddress `
+-Name $jumpboxVmName `
+-ResourceGroupName $resourceGroupName `
+-Location $location `
+-Sku Basic `
+-AllocationMethod Dynamic `
+-DomainNameLabel $dnsLabel;
+
 Write-Host "Creating a management VM ..."
 New-AzVm `
 -ResourceGroupName $resourceGroupName `
@@ -85,32 +134,85 @@ New-AzVm `
 -SubnetName $mngSubnetName `
 -VirtualNetworkName $virtualNetworkName `
 -SshKeyName $sshKeyName `
--PublicIpAddressName $jumpboxVmName
+-PublicIpAddressName $jumpboxVmName;
 
 
 Write-Host "Creating a private DNS zone ..."
-$Zone = New-AzPrivateDnsZone -Name $privateDnsZoneName -ResourceGroupName $resourceGroupName 
-$Link = New-AzPrivateDnsVirtualNetworkLink -ZoneName $privateDnsZoneName -ResourceGroupName $resourceGroupName -Name $Zone.Name -VirtualNetworkId $virtualNetwork.Id -EnableRegistration
+$Zone = New-AzPrivateDnsZone `
+-Name $privateDnsZoneName `
+-ResourceGroupName $resourceGroupName;
+
+$Link = New-AzPrivateDnsVirtualNetworkLink `
+-ZoneName $privateDnsZoneName `
+-ResourceGroupName $resourceGroupName `
+-Name $Zone.Name `
+-VirtualNetworkId $virtualNetwork.Id `
+-EnableRegistration;
 
 
 Write-Host "Creating an A DNS record ..."
 $Records = @()
-$Records += New-AzPrivateDnsRecordConfig -IPv4Address $lbIpAddress
-New-AzPrivateDnsRecordSet -Name "todo" -RecordType A -ResourceGroupName $resourceGroupName -TTL 1800 -ZoneName $privateDnsZoneName -PrivateDnsRecords $Records
+$Records += New-AzPrivateDnsRecordConfig -IPv4Address $lbIpAddress;
+New-AzPrivateDnsRecordSet `
+-Name "todo" `
+-RecordType A `
+-ResourceGroupName $resourceGroupName `
+-TTL 1800 `
+-ZoneName $privateDnsZoneName `
+-PrivateDnsRecords $Records;
 
 # Prepare variables, required for creation and configuration of load balancer - 
 # you will need them to setup a load balancer 
 $webSubnetId = (Get-AzVirtualNetworkSubnetConfig -Name $webSubnetName -VirtualNetwork $virtualNetwork).Id
+$frontendIpConfigName = "myFrontEnd"
+$backendAddressPoolName = "myBackEndPool"
+$healthProbeName = "myHealthProbe"
+$lbRuleName = "myLoadBalancerRule"
 
-# Write your code here -> 
+# Write your code here ->
+Write-Host "Creating load balancer frontend configuration "
+$feip = New-AzLoadBalancerFrontendIpConfig `
+-Name $frontendIpConfigName `
+-PrivateIpAddress $lbIpAddress `
+-SubnetId $webSubnetId
+Write-Host "Creating a backend pool configuration"
+$bepool = New-AzLoadBalancerBackendAddressPoolConfig -Name $backendAddressPoolName
+
+Write-Host "Creatimg the health probe configuration"
+$healthprobe = New-AzLoadBalancerProbeConfig `
+-Name $healthProbeName `
+-Protocol Tcp `
+-Port 8080 `
+-IntervalInSeconds 60 `
+-ProbeCount 5
+
+Write-Host "creating a load balancer rule configuration"
+$rule = New-AzLoadBalancerRuleConfig `
+-Name $lbRuleName  `
+-Protocol Tcp `
+-FrontendPort 80 `
+-BackendPort 8080 `
+-IdleTimeoutInMinutes 15 `
+-FrontendIpConfiguration $feip `
+-BackendAddressPool $bepool `
+-EnableTcpReset
+
 Write-Host "Creating a load balancer ..."
+New-AzLoadBalancer `
+-ResourceGroupName $resourceGroupName `
+-Location $location `
+-Name $lbName `
+-Sku Standard `
+-FrontendIpConfiguration $feip `
+-BackendAddressPool $bepool `
+-LoadBalancingRule $rule `
+-Probe $healthprobe
 
-
-# Write-Host "Adding VMs to the backend pool"
-# $vms = Get-AzVm -ResourceGroupName $resourceGroupName | Where-Object {$_.Name.StartsWith($webVmName)}
-# foreach ($vm in $vms) {
-#    $nic = Get-AzNetworkInterface -ResourceGroupName $resourceGroupName | Where-Object {$_.Id -eq $vm.NetworkProfile.NetworkInterfaces.Id}    
-#    $ipCfg = $nic.IpConfigurations | Where-Object {$_.Primary} 
-#    $ipCfg.LoadBalancerBackendAddressPools.Add($bepool)
-#    Set-AzNetworkInterface -NetworkInterface $nic
-# }
+Write-Host "Adding VMs to the backend pool"
+$vms = Get-AzVm -ResourceGroupName $resourceGroupName | Where-Object {$_.Name.StartsWith($webVmName)}
+foreach ($vm in $vms) {
+   $nic = Get-AzNetworkInterface -ResourceGroupName $resourceGroupName | Where-Object {$_.Id -eq $vm.NetworkProfile.NetworkInterfaces.Id}
+   $ipCfg = $nic.IpConfigurations | Where-Object {$_.Primary}
+   $ipCfg.LoadBalancerBackendAddressPools.Add($bepool)
+   Set-AzNetworkInterface -NetworkInterface $nic
+}
