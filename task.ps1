@@ -9,7 +9,7 @@ $mngSubnetName = "management"
 $mngSubnetIpRange = "10.20.30.128/26"
 
 $sshKeyName = "linuxboxsshkey"
-$sshKeyPublicKey = Get-Content "~/.ssh/id_rsa.pub"
+$sshKeyPublicKey = Get-Content "~/.ssh/id_ed25519.pub"
 
 $vmImage = "Ubuntu2204"
 $vmSize = "Standard_B1s"
@@ -30,8 +30,9 @@ Write-Host "Creating web network security group..."
 $webHttpRule = New-AzNetworkSecurityRuleConfig -Name "web" -Description "Allow HTTP" `
    -Access Allow -Protocol Tcp -Direction Inbound -Priority 100 -SourceAddressPrefix `
    Internet -SourcePortRange * -DestinationAddressPrefix * -DestinationPortRange 80,443
-$webNsg = New-AzNetworkSecurityGroup -ResourceGroupName $resourceGroupName -Location $location -Name `
-   $webSubnetName -SecurityRules $webHttpRule
+
+$webNsg = New-AzNetworkSecurityGroup -ResourceGroupName $resourceGroupName `
+  -Location $location -Name $webSubnetName -SecurityRules $webHttpRule
 
 Write-Host "Creating mngSubnet network security group..."
 $mngSshRule = New-AzNetworkSecurityRuleConfig -Name "ssh" -Description "Allow SSH" `
@@ -39,6 +40,7 @@ $mngSshRule = New-AzNetworkSecurityRuleConfig -Name "ssh" -Description "Allow SS
    Internet -SourcePortRange * -DestinationAddressPrefix * -DestinationPortRange 22
 $mngNsg = New-AzNetworkSecurityGroup -ResourceGroupName $resourceGroupName -Location $location -Name `
    $mngSubnetName -SecurityRules $mngSshRule
+
 
 Write-Host "Creating a virtual network ..."
 $webSubnet = New-AzVirtualNetworkSubnetConfig -Name $webSubnetName -AddressPrefix $webSubnetIpRange -NetworkSecurityGroup $webNsg
@@ -74,7 +76,7 @@ for (($zone = 1); ($zone -le 2); ($zone++) ) {
 }
 
 Write-Host "Creating a public IP ..."
-$publicIP = New-AzPublicIpAddress -Name $jumpboxVmName -ResourceGroupName $resourceGroupName -Location $location -Sku Basic -AllocationMethod Dynamic -DomainNameLabel $dnsLabel
+$publicIP = New-AzPublicIpAddress -Name $jumpboxVmName -ResourceGroupName $resourceGroupName -Location $location -Sku Standard -AllocationMethod Static -DomainNameLabel $dnsLabel
 Write-Host "Creating a management VM ..."
 New-AzVm `
 -ResourceGroupName $resourceGroupName `
@@ -100,17 +102,62 @@ New-AzPrivateDnsRecordSet -Name "todo" -RecordType A -ResourceGroupName $resourc
 
 # Prepare variables, required for creation and configuration of load balancer - 
 # you will need them to setup a load balancer 
-$webSubnetId = (Get-AzVirtualNetworkSubnetConfig -Name $webSubnetName -VirtualNetwork $virtualNetwork).Id
+
 
 # Write your code here -> 
 Write-Host "Creating a load balancer ..."
 
+# 0. Ідентифікатор сабнету webservers
+$webSubnetObj = Get-AzVirtualNetworkSubnetConfig -Name $webSubnetName -VirtualNetwork $virtualNetwork
 
-# Write-Host "Adding VMs to the backend pool"
-# $vms = Get-AzVm -ResourceGroupName $resourceGroupName | Where-Object {$_.Name.StartsWith($webVmName)}
-# foreach ($vm in $vms) {
-#    $nic = Get-AzNetworkInterface -ResourceGroupName $resourceGroupName | Where-Object {$_.Id -eq $vm.NetworkProfile.NetworkInterfaces.Id}    
-#    $ipCfg = $nic.IpConfigurations | Where-Object {$_.Primary} 
-#    $ipCfg.LoadBalancerBackendAddressPools.Add($bepool)
-#    Set-AzNetworkInterface -NetworkInterface $nic
-# }
+# 1. Frontend (приватна IP у сабнеті)
+$feCfg = New-AzLoadBalancerFrontendIpConfig `
+  -Name "fe-internal" `
+  -SubnetId $webSubnetObj.Id `
+  -PrivateIpAddress "10.20.30.62" `
+  -PrivateIpAddressVersion IPv4
+
+# 2. Backend pool
+$bePool = New-AzLoadBalancerBackendAddressPoolConfig -Name "be-web"
+
+# 3. Health probe на 8080
+$probe = New-AzLoadBalancerProbeConfig `
+  -Name "probe-8080" -Protocol Tcp -Port 8080 `
+  -IntervalInSeconds 5 -ProbeCount 2
+
+# 4. Rule: вхід 80 → бекенд 8080
+$rule = New-AzLoadBalancerRuleConfig `
+  -Name "rule-http" `
+  -FrontendIpConfiguration $feCfg `
+  -BackendAddressPool      $bePool `
+  -Probe                   $probe `
+  -Protocol Tcp `
+  -FrontendPort 80 `
+  -BackendPort 8080
+
+# 5. Створюємо LB
+$ilb = New-AzLoadBalancer `
+  -Name "todo-ilb" `
+  -ResourceGroupName $resourceGroupName `
+  -Location $location `
+  -FrontendIpConfiguration $feCfg `
+  -BackendAddressPool      $bePool `
+  -Probe                   $probe `
+  -LoadBalancingRule       $rule `
+  -Sku Standard
+
+
+Write-Host "Adding VMs to the backend pool"
+$bePoolRef = Get-AzLoadBalancerBackendAddressPoolConfig -LoadBalancer $ilb -Name "be-web"
+
+$vms = Get-AzVM -ResourceGroupName $resourceGroupName | Where-Object { $_.Name -like "$webVmName*" }
+foreach ($vm in $vms) {
+    $nicId   = $vm.NetworkProfile.NetworkInterfaces[0].Id
+    $nicName = (Split-Path $nicId -Leaf)
+    $nic     = Get-AzNetworkInterface -ResourceGroupName $resourceGroupName -Name $nicName
+
+    $ipCfg = $nic.IpConfigurations | Where-Object { $_.Primary }
+    $ipCfg.LoadBalancerBackendAddressPools = @($bePoolRef)
+
+    Set-AzNetworkInterface -NetworkInterface $nic
+}
