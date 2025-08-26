@@ -1,13 +1,22 @@
 ############################################################
-# Azure Task 18: Configure Load Balancing (clean start)
-# Idempotent, uses Standard Public IP, Internal Standard LB
+# Azure Task 18: Configure Load Balancing (final, non-interactive)
+# - Deploys into existing RG "mate-resources"
+# - No interactive prompts (params for creds; auto-generate if missing)
+# - Internal Standard LB (10.20.30.62) with probe 8080 and rule 80->8080
+# - Private DNS todo.or.nottodo -> LB FE IP
+# - NSG(webservers) single rule allowing TCP 80 & 443 from *
 ############################################################
+
+param(
+  [string]$AdminUser = "azureuser",
+  [SecureString]$AdminPassword
+)
 
 $ErrorActionPreference = "Stop"
 
 # ---------- Variables ----------
 $location            = "uksouth"
-$resourceGroupName   = "mate-azure-task-18"
+$resourceGroupName   = "mate-resources"   # <-- per checklist
 
 $virtualNetworkName  = "todoapp"
 $vnetAddressPrefix   = "10.20.30.0/24"
@@ -34,9 +43,20 @@ $beName              = "$lbName-bepool"
 $probeName           = "tcp8080"
 $ruleName            = "http80to8080"
 
+# ---------- Credentials (non-interactive) ----------
+if (-not $AdminPassword) {
+  # автогенерація надійного пароля (щоб не було інтерактиву)
+  $chars = (48..57 + 65..90 + 97..122 + 33,35,36,37,38,64)
+  $pw = -join ($chars | Get-Random -Count 24 | ForEach-Object {[char]$_})
+  $pw += "aA1!"  # гарантуємо усі класи
+  $AdminPassword = ConvertTo-SecureString $pw -AsPlainText -Force
+}
+$cred = New-Object System.Management.Automation.PSCredential($AdminUser, $AdminPassword)
+
 # ---------- Helpers ----------
 function Ensure-ResourceGroup {
   param($Name, $Location)
+  # Умовно-ідемпотентно: якщо RG існує — нічого не робимо
   if (-not (Get-AzResourceGroup -Name $Name -ErrorAction SilentlyContinue)) {
     Write-Host "Creating resource group $Name ..."
     New-AzResourceGroup -Name $Name -Location $Location | Out-Null
@@ -57,33 +77,37 @@ Ensure-ResourceGroup -Name $resourceGroupName -Location $location
 
 # ---------- NSGs ----------
 Write-Host "Ensuring NSGs ..."
-# web NSG (Allow HTTP 80/443 + health probe 8080)
-$webHttpRule = New-AzNetworkSecurityRuleConfig -Name "web" -Description "Allow HTTP" `
-   -Access Allow -Protocol Tcp -Direction Inbound -Priority 100 `
-   -SourceAddressPrefix Internet -SourcePortRange * -DestinationAddressPrefix * -DestinationPortRange 80,443
-$probeRule   = New-AzNetworkSecurityRuleConfig -Name "allow-probe-8080" -Description "Allow health probe from Azure Load Balancer" `
-   -Access Allow -Protocol Tcp -Direction Inbound -Priority 110 `
-   -SourceAddressPrefix AzureLoadBalancer -SourcePortRange * -DestinationAddressPrefix * -DestinationPortRange 8080
-
-$webNsg = Get-AzNetworkSecurityGroup -ResourceGroupName $resourceGroupName -Name $webSubnetName -ErrorAction SilentlyContinue
-if (-not $webNsg) {
-  $webNsg = New-AzNetworkSecurityGroup -ResourceGroupName $resourceGroupName -Location $location -Name $webSubnetName -SecurityRules $webHttpRule,$probeRule
-} else {
-  if (-not ($webNsg.SecurityRules | Where-Object Name -eq "web"))              { $webNsg.SecurityRules.Add($webHttpRule) | Out-Null }
-  if (-not ($webNsg.SecurityRules | Where-Object Name -eq "allow-probe-8080")) { $webNsg.SecurityRules.Add($probeRule)   | Out-Null }
-  Set-AzNetworkSecurityGroup -NetworkSecurityGroup $webNsg | Out-Null
-}
-
-# mng NSG (Allow SSH 22)
+# management NSG (Allow SSH 22 from any)
 $mngSshRule = New-AzNetworkSecurityRuleConfig -Name "ssh" -Description "Allow SSH" `
    -Access Allow -Protocol Tcp -Direction Inbound -Priority 100 `
-   -SourceAddressPrefix Internet -SourcePortRange * -DestinationAddressPrefix * -DestinationPortRange 22
+   -SourceAddressPrefix * -SourcePortRange * -DestinationAddressPrefix * -DestinationPortRange 22
+
 $mngNsg = Get-AzNetworkSecurityGroup -ResourceGroupName $resourceGroupName -Name $mngSubnetName -ErrorAction SilentlyContinue
 if (-not $mngNsg) {
   $mngNsg = New-AzNetworkSecurityGroup -ResourceGroupName $resourceGroupName -Location $location -Name $mngSubnetName -SecurityRules $mngSshRule
 } else {
-  if (-not ($mngNsg.SecurityRules | Where-Object Name -eq "ssh")) { $mngNsg.SecurityRules.Add($mngSshRule) | Out-Null }
+  # залишаємо рівно 1 кастомне правило ssh
+  $mngNsg.SecurityRules.Clear()
+  $mngNsg.SecurityRules.Add($mngSshRule) | Out-Null
   Set-AzNetworkSecurityGroup -NetworkSecurityGroup $mngNsg | Out-Null
+}
+
+# web NSG (ми поставимо одне правило web через ARM-патч нижче)
+$webNsg = Get-AzNetworkSecurityGroup -ResourceGroupName $resourceGroupName -Name $webSubnetName -ErrorAction SilentlyContinue
+if (-not $webNsg) {
+  # створимо з тимчасовим правилом на 80 (далі замінимо через ARM на 80 і 443)
+  $tmpRule = New-AzNetworkSecurityRuleConfig -Name "web" -Description "Allow HTTP+HTTPS (temp)" `
+     -Access Allow -Protocol Tcp -Direction Inbound -Priority 100 `
+     -SourceAddressPrefix * -SourcePortRange * -DestinationAddressPrefix * -DestinationPortRange 80
+  $webNsg = New-AzNetworkSecurityGroup -ResourceGroupName $resourceGroupName -Location $location -Name $webSubnetName -SecurityRules $tmpRule
+} else {
+  # гарантуємо, що є тільки одне правило з ім'ям web (тимчасово на 80)
+  $webNsg.SecurityRules.Clear()
+  $tmpRule = New-AzNetworkSecurityRuleConfig -Name "web" -Description "Allow HTTP+HTTPS (temp)" `
+     -Access Allow -Protocol Tcp -Direction Inbound -Priority 100 `
+     -SourceAddressPrefix * -SourcePortRange * -DestinationAddressPrefix * -DestinationPortRange 80
+  $webNsg.SecurityRules.Add($tmpRule) | Out-Null
+  Set-AzNetworkSecurityGroup -NetworkSecurityGroup $webNsg | Out-Null
 }
 
 # ---------- VNet & Subnets ----------
@@ -107,15 +131,32 @@ if (-not $virtualNetwork) {
 }
 $webSubnetId = (Get-AzVirtualNetworkSubnetConfig -Name $webSubnetName -VirtualNetwork $virtualNetwork).Id
 
+# ---------- Force NSG(web) to have single rule with ports 80 & 443 via ARM ----------
+Write-Host "Patching web NSG rule to allow TCP 80 & 443 from * (ARM)..."
+$nsgRes = Get-AzResource -ResourceGroupName $resourceGroupName -ResourceType 'Microsoft.Network/networkSecurityGroups' -Name $webSubnetName -ExpandProperties
+$props  = $nsgRes.Properties
+$props.securityRules = @(
+  @{
+    name = 'web'
+    properties = @{
+      priority                 = 100
+      direction                = 'Inbound'
+      access                   = 'Allow'
+      protocol                 = 'Tcp'
+      sourceAddressPrefix      = '*'
+      sourcePortRange          = '*'
+      destinationAddressPrefix = '*'
+      destinationPortRanges    = @('80','443')
+      description              = 'Allow HTTP+HTTPS'
+    }
+  }
+)
+Set-AzResource -ResourceId $nsgRes.ResourceId -Properties $props -Force | Out-Null
+
 # ---------- SSH Key Resource ----------
 Write-Host "Ensuring SSH key resource ..."
 $sshPub = Get-Content $sshKeyPublicKeyPath
 Ensure-SshKey -Name $sshKeyName -Rg $resourceGroupName -PubKey $sshPub
-
-# ---------- Credential once ----------
-if (-not $cred) {
-  $cred = Get-Credential -UserName 'azureuser' -Message 'Введи пароль для azureuser (використаємо для всіх ВМ)'
-}
 
 # ---------- Web VMs (1..2) + app install ----------
 Write-Host "Ensuring Web VMs ..."
@@ -179,7 +220,7 @@ if (-not (Get-AzVM -ResourceGroupName $resourceGroupName -Name $jumpboxVmName -E
     -PublicIpAddressName $jumpboxVmName `
     -Credential $cred | Out-Null
 } else {
-  # ensure NIC has PIP attached (in case VM was created earlier without PIP)
+  # ensure NIC has PIP attached (if VM existed)
   $jumpNic = Get-AzNetworkInterface -ResourceGroupName $resourceGroupName | Where-Object { $_.Name -like "$jumpboxVmName*" }
   if ($jumpNic) {
     $pip = Get-AzPublicIpAddress -ResourceGroupName $resourceGroupName -Name $jumpboxVmName
@@ -243,9 +284,9 @@ foreach ($nic in $webNics) {
 }
 
 # ---------- Done ----------
-Write-Host "All resources ensured. You can now connect to jumpbox and test:"
-$jumpIp = (Get-AzPublicIpAddress -ResourceGroupName $resourceGroupName -Name $jumpboxVmName).IpAddress
-Write-Host "Jumpbox IP: $jumpIp"
-Write-Host "From jumpbox:"
+Write-Host "All resources ensured in RG '$resourceGroupName'."
+$jumpIp = (Get-AzPublicIpAddress -ResourceGroupName $resourceGroupName -Name $jumpboxVmName -ErrorAction SilentlyContinue).IpAddress
+if ($jumpIp) { Write-Host "Jumpbox IP: $jumpIp" }
+Write-Host "Test from jumpbox:"
 Write-Host "  nslookup todo.$privateDnsZoneName"
 Write-Host "  curl -I http://todo.$privateDnsZoneName/"
