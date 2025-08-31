@@ -1,0 +1,31 @@
+Reading config
+Checking if temp folder exists
+Downloading artifacts
+Validating artifacts
+✅ Checked if virtual network exists - OK.
+✅ Checked the virtual network name - OK.
+✅ Checked the virtual network address space - OK.
+✅ Checked if 2 subnets exist - OK.
+✅ Checked webservers subnet - OK.
+✅ Checked if webservers subnet has NSG attached - OK.
+✅ Checked management subnet - OK.
+✅ Checked if management subnet has NSG attached - OK.
+✅ Checked if webservers NSG has only 1 rule - OK.
+✅ Checked if webservers NSG allows HTTP traffic - OK.
+✅ Checked if management NSG has only 1 rule - OK.
+✅ Checked if management NSG allows SSH traffic - OK.
+✅ Checked if DNS zone or.nottodo is created - OK.
+✅ Checked virtual network link for DNS zone - OK.
+✅ Checked virtual network link for DNS zone has auto-registration endbles - OK.
+✅ Checked A DNS record - OK.
+✅ Checked if load balancer exists - OK.
+✅ Checked if load balancer has only 1 front-end IP configuration - OK.
+✅ Checked if load balancer has private IP set for the frontend - OK.
+✅ Checked if load balancer has a backend address pool - OK.
+✅ Checked if load balancer backend pool has backend targets - OK.
+✅ Checked if load balancer backend pool has load balancing rules - OK.
+✅ Checked if load balancer rule frontend and backend ports - OK.
+✅ Checked if load balancer has health probe - OK.
+✅ Checked if health probe uses port 8080 - OK.
+
+🥳 Congratulations! All tests passed!
