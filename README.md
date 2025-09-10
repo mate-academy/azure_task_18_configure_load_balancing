@@ -2,7 +2,7 @@
 
 Another `ornottodo` concern is the reliability of TODO web app. To address it, you have already updated the script to deploy 2 web servers instead of 1. However, now you have to somehow balance traffic between them.
 
-In this task, you will set up Azure Load Balancer to distribute traffic between 2 VMs. 
+In this task, you will set up Azure Load Balancer to distribute traffic between 2 VMs.
 
 ## Prerequisites
 
@@ -35,19 +35,19 @@ If you are a Windows user, before running this command, please also run the foll
 
 ## Requirements
 
-In this task, you will need to update the existing PowerShell script `task.ps1`. The original script deploys the following resources: 
+In this task, you will need to update the existing PowerShell script `task.ps1`. The original script deploys the following resources:
 
 - virtual network with 2 subnets;
 - `webserver-1` and `webserver-2` virtual machines — used to host the todo web app. They are deployed in a subnet `web`, without public IP;
-- `jumpbox` virtual machine, used as a dedicated virtual machine for management of `webserver`. It is deployed to a separate subnet, has a public IP, and allows connecting to it through SSH; 
+- `jumpbox` virtual machine, used as a dedicated virtual machine for management of `webserver`. It is deployed to a separate subnet, has a public IP, and allows connecting to it through SSH;
 - `or.nottodo` private DNS zone, which is already linked to the virtual network;
 - `todo.or.not` a DNS record in the private DNS zone that points to IP `10.20.30.62`.
 
-In this task, you need to configure load balancing for the web servers. Specifically, you need to deploy a load balancer, configure it, and point domain `todo.or.nottodo` in the private DNS zone to its Frontend IP and create a DNS record in it: 
+In this task, you need to configure load balancing for the web servers. Specifically, you need to deploy a load balancer, configure it, and point domain `todo.or.nottodo` in the private DNS zone to its Frontend IP and create a DNS record in it:
 
 1. Review the script `task.ps1`.  
 
-2. Add deployment of the private load balancer to the script: 
+2. Add deployment of the private load balancer to the script:
 
 - Use the [quickstart](https://learn.microsoft.com/en-us/azure/load-balancer/quickstart-load-balancer-standard-internal-powershell#create-load-balancer) to get all nessesary commands;
 - Loadbalancer should be deployed into the subnet `webservers`;
@@ -65,7 +65,7 @@ In this task, you need to configure load balancing for the web servers. Specific
 
 7. Test yourself using the script `scripts/validate-artifacts.ps1`;
 
-8. Make sure that changes to both `task.ps1` and `result.json` are committed to the repo, and submit the solution for review; 
+8. Make sure that changes to both `task.ps1` and `result.json` are committed to the repo, and submit the solution for review;
 
 9. When the solution is validated, delete the resources you deployed with the PowerShell script — you won't need them for the next tasks;
 
