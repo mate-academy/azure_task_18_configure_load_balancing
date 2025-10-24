@@ -87,7 +87,6 @@ New-AzVm `
 -SshKeyName $sshKeyName `
 -PublicIpAddressName $jumpboxVmName
 
-
 Write-Host "Creating a private DNS zone ..."
 $Zone = New-AzPrivateDnsZone -Name $privateDnsZoneName -ResourceGroupName $resourceGroupName 
 $Link = New-AzPrivateDnsVirtualNetworkLink -ZoneName $privateDnsZoneName -ResourceGroupName $resourceGroupName -Name $Zone.Name -VirtualNetworkId $virtualNetwork.Id -EnableRegistration
@@ -98,15 +97,13 @@ $Records = @()
 $Records += New-AzPrivateDnsRecordConfig -IPv4Address $lbIpAddress
 New-AzPrivateDnsRecordSet -Name "todo" -RecordType A -ResourceGroupName $resourceGroupName -TTL 1800 -ZoneName $privateDnsZoneName -PrivateDnsRecords $Records
 
-# Prepare variables, required for creation and configuration of load balancer - 
-# you will need them to setup a load balancer 
+
 $webSubnetId = (Get-AzVirtualNetworkSubnetConfig -Name $webSubnetName -VirtualNetwork $virtualNetwork).Id
 $lbFrontendName = "lbFrontEnd"
 $webBackendPoolName = "webBackendPool"
 $httpProbeName = "http-probe"
 $loadBalancerRuleName = "http-rule"
 
-# Write your code here ->
 Write-Host "Creating a load balancer ..."
 $lbip = @{
     Name = $lbFrontendName
@@ -147,13 +144,13 @@ $loadBalancer = @{
     LoadBalancingRule = $rule
     Probe = $healthProbe
 }
-New-AzLoadBalancer @loadBalancer
+$createdLoadBalancer = New-AzLoadBalancer @loadBalancer
 
 Write-Host "Adding VMs to the backend pool"
 $vms = Get-AzVm -ResourceGroupName $resourceGroupName | Where-Object {$_.Name.StartsWith($webVmName)}
 foreach ($vm in $vms) {
    $nic = Get-AzNetworkInterface -ResourceGroupName $resourceGroupName | Where-Object {$_.Id -eq $vm.NetworkProfile.NetworkInterfaces.Id}
    $ipCfg = $nic.IpConfigurations | Where-Object {$_.Primary}
-   $ipCfg.LoadBalancerBackendAddressPools.Add($backendPool)
+   $ipCfg.LoadBalancerBackendAddressPools.Add($createdLoadBalancer.BackendAddressPools[0])
    Set-AzNetworkInterface -NetworkInterface $nic
 }
