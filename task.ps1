@@ -138,7 +138,7 @@ $loadbalancerobject = @{
 }
 $loadbalancer = New-AzLoadBalancer @loadbalancerobject
 
-# Write-Host "Adding VMs to the backend pool"
+Write-Host "Adding VMs to the backend pool"
 $vms = Get-AzVm -ResourceGroupName $resourceGroupName | Where-Object {$_.Name.StartsWith($webVmName)}
 foreach ($vm in $vms) {
    $nic = Get-AzNetworkInterface -ResourceGroupName $resourceGroupName | Where-Object {$_.Id -eq $vm.NetworkProfile.NetworkInterfaces.Id}    
