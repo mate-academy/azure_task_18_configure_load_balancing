@@ -1,4 +1,4 @@
-$location = "uksouth"
+$location = "canadacentral"
 $resourceGroupName = "mate-azure-task-18"
 
 $virtualNetworkName = "todoapp"
@@ -9,10 +9,10 @@ $mngSubnetName = "management"
 $mngSubnetIpRange = "10.20.30.128/26"
 
 $sshKeyName = "linuxboxsshkey"
-$sshKeyPublicKey = Get-Content "~/.ssh/id_rsa.pub"
+$sshKeyPublicKey = Get-Content "~/.ssh/id_rsa_azure.pub"
 
 $vmImage = "Ubuntu2204"
-$vmSize = "Standard_B1s"
+$vmSize = "Standard_B2ats_v2"
 $webVmName = "webserver"
 $jumpboxVmName = "jumpbox"
 $dnsLabel = "matetask" + (Get-Random -Count 1)
@@ -60,7 +60,7 @@ for (($zone = 1); ($zone -le 2); ($zone++) ) {
    -size $vmSize `
    -SubnetName $webSubnetName `
    -VirtualNetworkName $virtualNetworkName `
-   -SshKeyName $sshKeyName 
+   -SshKeyName $sshKeyName
    $Params = @{
       ResourceGroupName  = $resourceGroupName
       VMName             = $vmName
@@ -74,7 +74,7 @@ for (($zone = 1); ($zone -le 2); ($zone++) ) {
 }
 
 Write-Host "Creating a public IP ..."
-$publicIP = New-AzPublicIpAddress -Name $jumpboxVmName -ResourceGroupName $resourceGroupName -Location $location -Sku Basic -AllocationMethod Dynamic -DomainNameLabel $dnsLabel
+$publicIP = New-AzPublicIpAddress -Name $jumpboxVmName -ResourceGroupName $resourceGroupName -Location $location -Sku Standard -AllocationMethod Static -DomainNameLabel $dnsLabel
 Write-Host "Creating a management VM ..."
 New-AzVm `
 -ResourceGroupName $resourceGroupName `
@@ -89,7 +89,7 @@ New-AzVm `
 
 
 Write-Host "Creating a private DNS zone ..."
-$Zone = New-AzPrivateDnsZone -Name $privateDnsZoneName -ResourceGroupName $resourceGroupName 
+$Zone = New-AzPrivateDnsZone -Name $privateDnsZoneName -ResourceGroupName $resourceGroupName
 $Link = New-AzPrivateDnsVirtualNetworkLink -ZoneName $privateDnsZoneName -ResourceGroupName $resourceGroupName -Name $Zone.Name -VirtualNetworkId $virtualNetwork.Id -EnableRegistration
 
 
@@ -98,19 +98,59 @@ $Records = @()
 $Records += New-AzPrivateDnsRecordConfig -IPv4Address $lbIpAddress
 New-AzPrivateDnsRecordSet -Name "todo" -RecordType A -ResourceGroupName $resourceGroupName -TTL 1800 -ZoneName $privateDnsZoneName -PrivateDnsRecords $Records
 
-# Prepare variables, required for creation and configuration of load balancer - 
-# you will need them to setup a load balancer 
+# Prepare variables, required for creation and configuration of load balancer -
+# you will need them to setup a load balancer
 $webSubnetId = (Get-AzVirtualNetworkSubnetConfig -Name $webSubnetName -VirtualNetwork $virtualNetwork).Id
 
-# Write your code here -> 
-Write-Host "Creating a load balancer ..."
+
+Write-Host "Creating LB frontend IP config ..."
+$frontendIpConfig = New-AzLoadBalancerFrontendIpConfig `
+   -Name "fronted" `
+   -PrivateIpAddress $lbIpAddress `
+   -SubnetId  $webSubnetId
+
+Write-Host "Creating LB backend pool config ..."
+$backendAddressPoolConfig = New-AzLoadBalancerBackendAddressPoolConfig `
+   -Name "backendPool"
+
+Write-Host "Creating LB probe config ..."
+$healthProbe = New-AzLoadBalancerProbeConfig `
+   -Name "healthProbe" `
+   -Protocol "tcp" `
+   -Port 8080 `
+   -IntervalInSeconds 10 `
+   -ProbeCount 3
 
 
-# Write-Host "Adding VMs to the backend pool"
-# $vms = Get-AzVm -ResourceGroupName $resourceGroupName | Where-Object {$_.Name.StartsWith($webVmName)}
-# foreach ($vm in $vms) {
-#    $nic = Get-AzNetworkInterface -ResourceGroupName $resourceGroupName | Where-Object {$_.Id -eq $vm.NetworkProfile.NetworkInterfaces.Id}    
-#    $ipCfg = $nic.IpConfigurations | Where-Object {$_.Primary} 
-#    $ipCfg.LoadBalancerBackendAddressPools.Add($bepool)
-#    Set-AzNetworkInterface -NetworkInterface $nic
-# }
+Write-Host "Creating LB rule ..."
+$httpRule = New-AzLoadBalancerRuleConfig `
+   -Name "httpRule" `
+   -Protocol "tcp" `
+   -FrontendPort 80 `
+   -BackendPort 8080 `
+   -IdleTimeoutInMinutes 15 `
+   -FrontendIpConfiguration $frontendIpConfig `
+   -BackendAddressPool $backendAddressPoolConfig `
+   -EnableTcpReset
+
+
+Write-Host "Creating an LB ..."
+New-AzLoadBalancer `
+   -ResourceGroupName $resourceGroupName `
+   -Name $lbName `
+   -Location $location `
+   -Sku Standard `
+   -FrontendIpConfiguration $frontendIpConfig `
+   -BackendAddressPool $backendAddressPoolConfig `
+   -LoadBalancingRule $httpRule `
+   -Probe $healthProbe
+
+
+Write-Host "Adding VMs to the backend pool ..."
+$vms = Get-AzVm -ResourceGroupName $resourceGroupName | Where-Object {$_.Name.StartsWith($webVmName)}
+foreach ($vm in $vms) {
+ $nic = Get-AzNetworkInterface -ResourceGroupName $resourceGroupName | Where-Object {$_.Id -eq $vm.NetworkProfile.NetworkInterfaces.Id}
+ $ipCfg = $nic.IpConfigurations | Where-Object {$_.Primary}
+ $ipCfg.LoadBalancerBackendAddressPools.Add($backendAddressPoolConfig)
+ Set-AzNetworkInterface -NetworkInterface $nic
+}
