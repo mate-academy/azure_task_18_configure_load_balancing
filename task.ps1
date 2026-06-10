@@ -1,5 +1,5 @@
 $location = "polandcentral"
-$resourceGroupName = "mate-azure-task-18"
+$resourceGroupName = "mate-resources"
 
 $virtualNetworkName = "todoapp"
 $vnetAddressPrefix = "10.20.30.0/24"
@@ -130,3 +130,5 @@ foreach ($vm in $vms) {
    $ipCfg.LoadBalancerBackendAddressPools.Add($bepool)
    Set-AzNetworkInterface -NetworkInterface $nic
 }
+
+Remove-AzResourceGroup -Name $resourceGroupName
