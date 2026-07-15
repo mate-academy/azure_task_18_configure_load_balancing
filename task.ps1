@@ -139,7 +139,7 @@ $lbrule = @{
     BackendPort = '8080'
     IdleTimeoutInMinutes = '15'
     FrontendIpConfiguration = $feip
-    BackendAddressPool = $bePool
+    BackendAddressPool = $bepool
 }
 $rule = New-AzLoadBalancerRuleConfig @lbrule -EnableTcpReset
 
