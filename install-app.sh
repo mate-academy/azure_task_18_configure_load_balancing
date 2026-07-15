@@ -1,12 +1,5 @@
 #!/bin/bash
-#!/bin/bash
 set -e
-
-while sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
-    echo "Waiting for unattended upgrades..."
-    sleep 10
-done
-
 
 # Script to silently install and start the todo web app on the virtual machine. 
 # Note that all commands bellow are without sudo - that's because extention mechanism 
