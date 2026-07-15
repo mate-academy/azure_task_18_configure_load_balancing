@@ -127,7 +127,7 @@ $probe = @{
     Name = 'lb-health-probe'
     Protocol = 'tcp'
     Port = '8080'
-    IntervalInSeconds = '360'
+    IntervalInSeconds = '15'
     ProbeCount = '5'
 }
 $healthprobe = New-AzLoadBalancerProbeConfig @probe
@@ -150,7 +150,7 @@ $loadbalancer = @{
     Location = $location
     Sku = 'Standard'
     FrontendIpConfiguration = $feip
-    BackendAddressPool = $bePool
+    BackendAddressPool = $bepool
     LoadBalancingRule = $rule
     Probe = $healthprobe
 }
