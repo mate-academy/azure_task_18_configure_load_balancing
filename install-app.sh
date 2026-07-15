@@ -7,9 +7,8 @@
 # install system updates and isntall python3-pip package using apt. '-yq' flags are 
 # used to suppress any interactive prompts - we won't be able to confirm operation 
 # when running the script as VM extention.  
-# change something
-apt update -yq
-apt install python3-pip -yq
+sudo apt update -yq
+sudo apt install python3-pip -yq
 
 # Create a directory for the app and download the files. 
 mkdir /app 
