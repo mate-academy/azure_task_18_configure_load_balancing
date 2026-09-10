@@ -122,7 +122,7 @@ $bepool = $lb.BackendAddressPools[0]
 Write-Host "Adding VMs to the backend pool"
 $vms = Get-AzVm -ResourceGroupName $resourceGroupName | Where-Object {$_.Name.StartsWith($webVmName)}
 foreach ($vm in $vms) {
-   $nic = Get-AzNetworkInterface -ResourceGroupName $resourceGroupName | Where-Object {$_.Id -eq $vm.NetworkProfile.NetworkInterfaces.Id}
+   $nic = Get-AzNetworkInterface -ResourceGroupName $resourceGroupName | Where-Object { $vm.NetworkProfile.NetworkInterfaces.Id -contains $_.Id }
    $ipCfg = $nic.IpConfigurations | Where-Object {$_.Primary}
    $ipCfg.LoadBalancerBackendAddressPools.Add($bepool)
    Set-AzNetworkInterface -NetworkInterface $nic
