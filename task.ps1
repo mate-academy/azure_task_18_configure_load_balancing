@@ -1,4 +1,4 @@
-$location = "uksouth"
+$location = "denmarkeast"
 $resourceGroupName = "mate-azure-task-18"
 
 $virtualNetworkName = "todoapp"
@@ -9,7 +9,7 @@ $mngSubnetName = "management"
 $mngSubnetIpRange = "10.20.30.128/26"
 
 $sshKeyName = "linuxboxsshkey"
-$sshKeyPublicKey = Get-Content "~/.ssh/id_rsa.pub"
+$sshKeyPublicKey = Get-Content "./my_key.pub"
 
 $vmImage = "Ubuntu2204"
 $vmSize = "Standard_B1s"
@@ -41,7 +41,7 @@ $mngNsg = New-AzNetworkSecurityGroup -ResourceGroupName $resourceGroupName -Loca
    $mngSubnetName -SecurityRules $mngSshRule
 
 Write-Host "Creating a virtual network ..."
-$webSubnet = New-AzVirtualNetworkSubnetConfig -Name $webSubnetName -AddressPrefix $webSubnetIpRange -NetworkSecurityGroup $webNsg
+$webSubnet = New-AzVirtualNetworkSubnetConfig -Name $webSubnetName -AddressPrefix $webSubnetIpRange -NetworkSecurityGroup $webNsg -DefaultOutboundAccess $true
 $mngSubnet = New-AzVirtualNetworkSubnetConfig -Name $mngSubnetName -AddressPrefix $mngSubnetIpRange -NetworkSecurityGroup $mngNsg
 $virtualNetwork = New-AzVirtualNetwork -Name $virtualNetworkName -ResourceGroupName $resourceGroupName -Location $location -AddressPrefix $vnetAddressPrefix -Subnet $webSubnet,$mngSubnet
 
@@ -68,13 +68,15 @@ for (($zone = 1); ($zone -le 2); ($zone++) ) {
       Publisher          = 'Microsoft.Azure.Extensions'
       ExtensionType      = 'CustomScript'
       TypeHandlerVersion = '2.1'
-      Settings          = @{fileUris = @('https://raw.githubusercontent.com/mate-academy/azure_task_18_configure_load_balancing/main/install-app.sh'); commandToExecute = './install-app.sh'}
+      Settings          = @{
+         fileUris = @('https://raw.githubusercontent.com/mate-academy/azure_task_18_configure_load_balancing/main/install-app.sh');
+         commandToExecute = 'cloud-init status --wait && ./install-app.sh'}
    }
    Set-AzVMExtension @Params
 }
 
 Write-Host "Creating a public IP ..."
-$publicIP = New-AzPublicIpAddress -Name $jumpboxVmName -ResourceGroupName $resourceGroupName -Location $location -Sku Basic -AllocationMethod Dynamic -DomainNameLabel $dnsLabel
+$publicIP = New-AzPublicIpAddress -Name $jumpboxVmName -ResourceGroupName $resourceGroupName -Location $location -Sku Standard -AllocationMethod Static -DomainNameLabel $dnsLabel
 Write-Host "Creating a management VM ..."
 New-AzVm `
 -ResourceGroupName $resourceGroupName `
@@ -104,13 +106,24 @@ $webSubnetId = (Get-AzVirtualNetworkSubnetConfig -Name $webSubnetName -VirtualNe
 
 # Write your code here -> 
 Write-Host "Creating a load balancer ..."
+$frontend = New-AzLoadBalancerFrontendIpConfig -Name "FrontendIpConfig" -PrivateIpAddress $lbIpAddress -SubnetId $webSubnetId
+$bepool = New-AzLoadBalancerBackendAddressPoolConfig -Name "BackendIpConfig"
 
+$probe = New-AzLoadBalancerProbeConfig -Name "HealthProbe" -Protocol Http -Port 8080 -RequestPath "/" -IntervalInSeconds 15 -ProbeCount 2
+$rule = New-AzLoadBalancerRuleConfig -Name "MyLBrule" -FrontendIPConfiguration `
+   $frontend -BackendAddressPool $bepool -Probe $probe -Protocol Tcp `
+   -FrontendPort 80 -BackendPort 8080 -IdleTimeoutInMinutes 15
 
-# Write-Host "Adding VMs to the backend pool"
-# $vms = Get-AzVm -ResourceGroupName $resourceGroupName | Where-Object {$_.Name.StartsWith($webVmName)}
-# foreach ($vm in $vms) {
-#    $nic = Get-AzNetworkInterface -ResourceGroupName $resourceGroupName | Where-Object {$_.Id -eq $vm.NetworkProfile.NetworkInterfaces.Id}    
-#    $ipCfg = $nic.IpConfigurations | Where-Object {$_.Primary} 
-#    $ipCfg.LoadBalancerBackendAddressPools.Add($bepool)
-#    Set-AzNetworkInterface -NetworkInterface $nic
-# }
+$lb = New-AzLoadBalancer -ResourceGroupName $resourceGroupName -Name $lbName -Location $location `
+   -FrontendIpConfiguration $frontend -BackendAddressPool $bepool -LoadBalancingRule $rule -Sku Standard -Probe $probe
+
+$bepool = $lb.BackendAddressPools[0]
+
+Write-Host "Adding VMs to the backend pool"
+$vms = Get-AzVm -ResourceGroupName $resourceGroupName | Where-Object {$_.Name.StartsWith($webVmName)}
+foreach ($vm in $vms) {
+   $nic = Get-AzNetworkInterface -ResourceGroupName $resourceGroupName | Where-Object {$_.Id -eq $vm.NetworkProfile.NetworkInterfaces.Id}
+   $ipCfg = $nic.IpConfigurations | Where-Object {$_.Primary}
+   $ipCfg.LoadBalancerBackendAddressPools.Add($bepool)
+   Set-AzNetworkInterface -NetworkInterface $nic
+}
