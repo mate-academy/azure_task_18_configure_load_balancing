@@ -1,4 +1,4 @@
-$location = "westus2" # any region that is available in your Azure subscription
+$location = "polandcentral" # any region that is available in your Azure subscription
 $resourceGroupName = "mate-azure-task-18"
 
 $virtualNetworkName = "todoapp"
@@ -12,7 +12,7 @@ $sshKeyName = "linuxboxsshkey"
 $sshKeyPublicKey = Get-Content "~/.ssh/id_rsa.pub"
 
 $vmImage = "Ubuntu2204"
-$vmSize = "Standard_B1s"
+$vmSize = "Standard_F1as_v7"
 $webVmName = "webserver"
 $jumpboxVmName = "jumpbox"
 $dnsLabel = "matetask" + (Get-Random -Count 1)
@@ -74,7 +74,7 @@ for (($zone = 1); ($zone -le 2); ($zone++) ) {
 }
 
 Write-Host "Creating a public IP ..."
-$publicIP = New-AzPublicIpAddress -Name $jumpboxVmName -ResourceGroupName $resourceGroupName -Location $location -Sku Basic -AllocationMethod Dynamic -DomainNameLabel $dnsLabel
+$publicIP = New-AzPublicIpAddress -Name $jumpboxVmName -ResourceGroupName $resourceGroupName -Location $location -Sku Standard -AllocationMethod Static -DomainNameLabel $dnsLabel
 Write-Host "Creating a management VM ..."
 New-AzVm `
 -ResourceGroupName $resourceGroupName `
@@ -105,12 +105,49 @@ $webSubnetId = (Get-AzVirtualNetworkSubnetConfig -Name $webSubnetName -VirtualNe
 # Write your code here -> 
 Write-Host "Creating a load balancer ..."
 
+$frontend = New-AzLoadBalancerFrontendIpConfig -Name "frontend" -PrivateIpAddress $lbIpAddress -SubnetId $webSubnetId
+$bepool = New-AzLoadBalancerBackendAddressPoolConfig -Name "backendpool"
+$probe = New-AzLoadBalancerProbeConfig -Name "healthprobe" -Protocol Tcp -Port 8080 -IntervalInSeconds 15 -ProbeCount 2
+$rule = New-AzLoadBalancerRuleConfig -Name "httprule" -Protocol Tcp -FrontendPort 80 -BackendPort 8080 -FrontendIpConfiguration $frontend -BackendAddressPool $bepool -Probe $probe
 
-# Write-Host "Adding VMs to the backend pool"
-# $vms = Get-AzVm -ResourceGroupName $resourceGroupName | Where-Object {$_.Name.StartsWith($webVmName)}
-# foreach ($vm in $vms) {
-#    $nic = Get-AzNetworkInterface -ResourceGroupName $resourceGroupName | Where-Object {$_.Id -eq $vm.NetworkProfile.NetworkInterfaces.Id}    
-#    $ipCfg = $nic.IpConfigurations | Where-Object {$_.Primary} 
-#    $ipCfg.LoadBalancerBackendAddressPools.Add($bepool)
-#    Set-AzNetworkInterface -NetworkInterface $nic
-# }
+New-AzLoadBalancer -Name $lbName -ResourceGroupName $resourceGroupName -Location $location -Sku Standard -FrontendIpConfiguration $frontend -BackendAddressPool $bepool -Probe $probe -LoadBalancingRule $rule
+
+
+Write-Host "Adding VMs to the backend pool"
+$vms = @(Get-AzVm -ResourceGroupName $resourceGroupName -ErrorAction Stop | Where-Object { $_.Name -in @("$webVmName-1", "$webVmName-2") })
+if ($vms.Count -ne 2) {
+   throw "Expected 2 webserver VMs, but found $($vms.Count)."
+}
+
+$backendAddresses = @()
+foreach ($vm in $vms) {
+   $nicId = $vm.NetworkProfile.NetworkInterfaces[0].Id
+   if (-not $nicId) {
+      throw "Cannot find NIC resource ID for $($vm.Name)."
+   }
+   $nic = Get-AzNetworkInterface -ResourceId $nicId -ErrorAction Stop
+   $ipCfg = $nic.IpConfigurations | Where-Object { $_.Primary } | Select-Object -First 1
+   if (-not $ipCfg) { $ipCfg = $nic.IpConfigurations | Select-Object -First 1 }
+   if (-not $ipCfg.PrivateIpAddress) {
+      throw "Cannot find private IP address for $($vm.Name)."
+   }
+   $backendAddresses += New-AzLoadBalancerBackendAddressConfig -Name $vm.Name -IpAddress $ipCfg.PrivateIpAddress -VirtualNetworkId $virtualNetwork.Id -ErrorAction Stop
+   Write-Host "Backend target: $($vm.Name) -> $($ipCfg.PrivateIpAddress)"
+}
+
+$bepool = Get-AzLoadBalancerBackendAddressPool -ResourceGroupName $resourceGroupName -LoadBalancerName $lbName -Name "backendpool" -ErrorAction Stop
+if ($null -eq $bepool.LoadBalancerBackendAddresses) {
+   Set-AzLoadBalancerBackendAddressPool -ResourceGroupName $resourceGroupName -LoadBalancerName $lbName -Name "backendpool" -LoadBalancerBackendAddress $backendAddresses -Force -ErrorAction Stop
+} else {
+   $bepool.LoadBalancerBackendAddresses.Clear()
+   foreach ($backendAddress in $backendAddresses) {
+      $bepool.LoadBalancerBackendAddresses.Add($backendAddress)
+   }
+   Set-AzLoadBalancerBackendAddressPool -InputObject $bepool -Force -ErrorAction Stop
+}
+
+$bepool = Get-AzLoadBalancerBackendAddressPool -ResourceGroupName $resourceGroupName -LoadBalancerName $lbName -Name "backendpool" -ErrorAction Stop
+if ($bepool.LoadBalancerBackendAddresses.Count -ne 2) {
+   throw "Backend pool must contain 2 targets, but found $($bepool.LoadBalancerBackendAddresses.Count)."
+}
+Write-Host "Backend pool successfully configured with 2 targets."
