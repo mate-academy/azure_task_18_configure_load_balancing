@@ -1,4 +1,4 @@
-$location = "westus2" # any region that is available in your Azure subscription
+$location = "centralus" # any region that is available in your Azure subscription
 $resourceGroupName = "mate-azure-task-18"
 
 $virtualNetworkName = "todoapp"
@@ -9,10 +9,10 @@ $mngSubnetName = "management"
 $mngSubnetIpRange = "10.20.30.128/26"
 
 $sshKeyName = "linuxboxsshkey"
-$sshKeyPublicKey = Get-Content "~/.ssh/id_rsa.pub"
+$sshKeyPublicKey = Get-Content "$HOME\.ssh\id_ed25519.pub"
 
 $vmImage = "Ubuntu2204"
-$vmSize = "Standard_B1s"
+$vmSize = "Standard_D2als_v7"
 $webVmName = "webserver"
 $jumpboxVmName = "jumpbox"
 $dnsLabel = "matetask" + (Get-Random -Count 1)
@@ -29,7 +29,8 @@ New-AzResourceGroup -Name $resourceGroupName -Location $location
 Write-Host "Creating web network security group..."
 $webHttpRule = New-AzNetworkSecurityRuleConfig -Name "web" -Description "Allow HTTP" `
    -Access Allow -Protocol Tcp -Direction Inbound -Priority 100 -SourceAddressPrefix `
-   Internet -SourcePortRange * -DestinationAddressPrefix * -DestinationPortRange 80,443
+   Internet -SourcePortRange * -DestinationAddressPrefix * -DestinationPortRange 80,443,8080
+
 $webNsg = New-AzNetworkSecurityGroup -ResourceGroupName $resourceGroupName -Location $location -Name `
    $webSubnetName -SecurityRules $webHttpRule
 
@@ -102,15 +103,56 @@ New-AzPrivateDnsRecordSet -Name "todo" -RecordType A -ResourceGroupName $resourc
 # you will need them to setup a load balancer 
 $webSubnetId = (Get-AzVirtualNetworkSubnetConfig -Name $webSubnetName -VirtualNetwork $virtualNetwork).Id
 
-# Write your code here -> 
+# Write your code here ->
 Write-Host "Creating a load balancer ..."
 
+$lbip = @{
+    Name = "lb-frontend"
+    PrivateIpAddress = $lbIpAddress
+    SubnetId = $webSubnetId
+}
+$feip = New-AzLoadBalancerFrontendIpConfig @lbip
+$bepool = New-AzLoadBalancerBackendAddressPoolConfig -Name 'lb-backend-pool'
 
-# Write-Host "Adding VMs to the backend pool"
-# $vms = Get-AzVm -ResourceGroupName $resourceGroupName | Where-Object {$_.Name.StartsWith($webVmName)}
-# foreach ($vm in $vms) {
-#    $nic = Get-AzNetworkInterface -ResourceGroupName $resourceGroupName | Where-Object {$_.Id -eq $vm.NetworkProfile.NetworkInterfaces.Id}    
-#    $ipCfg = $nic.IpConfigurations | Where-Object {$_.Primary} 
-#    $ipCfg.LoadBalancerBackendAddressPools.Add($bepool)
-#    Set-AzNetworkInterface -NetworkInterface $nic
-# }
+$probe = @{
+    Name = 'lb-health-probe'
+    Protocol = 'tcp'
+    Port = '8080'
+    IntervalInSeconds = '15'
+    ProbeCount = '5'
+}
+$healthprobe = New-AzLoadBalancerProbeConfig @probe
+
+$lbrule = @{
+    Name = 'lb-HTTP-rule'
+    Protocol = 'tcp'
+    FrontendPort = '80'
+    BackendPort = '8080'
+    IdleTimeoutInMinutes = '15'
+    FrontendIpConfiguration = $feip
+    BackendAddressPool = $bePool
+}
+$rule = New-AzLoadBalancerRuleConfig @lbrule -EnableTcpReset
+
+$loadbalancer = @{
+    ResourceGroupName = $resourceGroupName
+    Name = $lbName
+    Location = 'centralus'
+    Sku = 'Standard'
+    FrontendIpConfiguration = $feip
+    BackendAddressPool = $bePool
+    LoadBalancingRule = $rule
+    Probe = $healthprobe
+}
+$deployedLoadBalancer = New-AzLoadBalancer @loadbalancer
+$deployedBackendPool = $deployedLoadBalancer.BackendAddressPools | Where-Object { $_.Name -eq 'lb-backend-pool' }
+
+
+Write-Host "Adding VMs to the backend pool"
+$vms = Get-AzVm -ResourceGroupName $resourceGroupName | Where-Object {$_.Name.StartsWith($webVmName)}
+foreach ($vm in $vms) {
+   $nic = Get-AzNetworkInterface -ResourceGroupName $resourceGroupName | Where-Object {$_.Id -eq $vm.NetworkProfile.NetworkInterfaces.Id}
+   $ipCfg = $nic.IpConfigurations | Where-Object {$_.Primary}
+   $ipCfg.LoadBalancerBackendAddressPools.Add($deployedBackendPool)
+   Set-AzNetworkInterface -NetworkInterface $nic
+}
