@@ -29,7 +29,8 @@ New-AzResourceGroup -Name $resourceGroupName -Location $location
 Write-Host "Creating web network security group..."
 $webHttpRule = New-AzNetworkSecurityRuleConfig -Name "web" -Description "Allow HTTP" `
    -Access Allow -Protocol Tcp -Direction Inbound -Priority 100 -SourceAddressPrefix `
-   Internet -SourcePortRange * -DestinationAddressPrefix * -DestinationPortRange 80,443
+   Internet -SourcePortRange * -DestinationAddressPrefix * -DestinationPortRange 80,443,8080
+
 $webNsg = New-AzNetworkSecurityGroup -ResourceGroupName $resourceGroupName -Location $location -Name `
    $webSubnetName -SecurityRules $webHttpRule
 
